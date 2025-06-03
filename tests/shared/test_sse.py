@@ -20,6 +20,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.shared.exceptions import McpError
 from mcp.types import (
+    AsyncToolResponse,
     EmptyResult,
     ErrorData,
     InitializeResult,
@@ -456,11 +457,9 @@ async def test_request_context_propagation(
             # Parse the JSON response
 
             assert len(tool_result.content) == 1
-            headers_data = json.loads(
-                tool_result.content[0].text
-                if tool_result.content[0].type == "text"
-                else "{}"
-            )
+            [content] = tool_result.content
+            assert not isinstance(content, AsyncToolResponse)
+            headers_data = json.loads(content.text if content.type == "text" else "{}")
 
             # Verify headers were propagated
             assert headers_data.get("authorization") == "Bearer test-token"
@@ -490,10 +489,10 @@ async def test_request_context_isolation(context_server: None, server_url: str) 
                 )
 
                 assert len(tool_result.content) == 1
+                [content] = tool_result.content
+                assert not isinstance(content, AsyncToolResponse)
                 context_data = json.loads(
-                    tool_result.content[0].text
-                    if tool_result.content[0].type == "text"
-                    else "{}"
+                    content.text if content.type == "text" else "{}"
                 )
                 contexts.append(context_data)
 

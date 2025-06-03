@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import (
     Annotated,
     Any,
@@ -29,10 +29,11 @@ for reference.
   not separate types in the schema.
 """
 
-LATEST_PROTOCOL_VERSION = "2025-03-26"
+LATEST_PROTOCOL_VERSION = "DRAFT-2025-v2"
 
 ProgressToken = str | int
 Cursor = str
+AsyncOperationToken = str
 Role = Literal["user", "assistant"]
 RequestId = str | int
 AnyFunction: TypeAlias = Callable[..., Any]
@@ -687,6 +688,14 @@ class PromptMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class ToolCallbackInfo(BaseModel):
+    """Information for async tool completion callback."""
+
+    url: str
+    metadata: dict[str, str]
+    model_config = ConfigDict(extra="allow")
+
+
 class GetPromptResult(Result):
     """The server's response to a prompts/get request from the client."""
 
@@ -788,6 +797,9 @@ class CallToolRequestParams(RequestParams):
 
     name: str
     arguments: dict[str, Any] | None = None
+    # TODO: support requestId and callback
+    requestId: str | None = None
+    callback: ToolCallbackInfo | None = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -798,10 +810,18 @@ class CallToolRequest(Request[CallToolRequestParams, Literal["tools/call"]]):
     params: CallToolRequestParams
 
 
+class AsyncToolResponse(BaseModel):
+    """Indicates that a tool is performing an asynchronous operation."""
+
+    token: AsyncOperationToken
+    model_config = ConfigDict(extra="allow")
+
+
 class CallToolResult(Result):
     """The server's response to a tool call."""
 
-    content: list[TextContent | ImageContent | EmbeddedResource]
+    content: list[TextContent | ImageContent | EmbeddedResource | AsyncToolResponse]
+    structuredContent: dict[str, Any] | None = None
     isError: bool = False
 
 
@@ -1120,6 +1140,71 @@ class CancelledNotification(
     params: CancelledNotificationParams
 
 
+class ResolveAsyncToolCallNotificationParams(NotificationParams):
+    metadata: dict[str, str]
+    token: AsyncOperationToken
+    state: Literal["successful", "failed", "cancelled"]
+    content: Sequence[TextContent | ImageContent | EmbeddedResource]
+    structuredContent: dict[str, Any] | None = None
+    isError: bool | None = None
+    model_config = ConfigDict(extra="allow")
+
+
+class ResolveAsyncToolCallNotification(
+    Notification[
+        ResolveAsyncToolCallNotificationParams,
+        Literal["notifications/tools/async/resolve"],
+    ]
+):
+    method: Literal["notifications/tools/async/resolve"]
+    params: ResolveAsyncToolCallNotificationParams
+
+
+class CancelAsyncToolCallResult(Result):
+    # TODO: The Typescript schema does not have this
+    error: ErrorData | None = None
+
+
+class CancelAsyncToolCallRequestParams(RequestParams):
+    name: str
+    token: AsyncOperationToken
+    model_config = ConfigDict(extra="allow")
+
+
+class CancelAsyncToolCallRequest(
+    Request[CancelAsyncToolCallRequestParams, Literal["tools/async/cancel"]]
+):
+    method: Literal["tools/async/cancel"]
+    params: CancelAsyncToolCallRequestParams
+
+
+class GetAsyncToolResultRequestParams(RequestParams):
+    """Parameters for retrieving the result of an asynchronous tool operation."""
+
+    name: str
+    token: AsyncOperationToken
+    wait: int | None = None
+    model_config = ConfigDict(extra="allow")
+
+
+class GetAsyncToolResultRequest(
+    Request[GetAsyncToolResultRequestParams, Literal["tools/async/get-result"]]
+):
+    """Used by the client to retrieve the result of an asynchronous tool operation."""
+
+    method: Literal["tools/async/get-result"]
+    params: GetAsyncToolResultRequestParams
+
+
+class GetAsyncToolResultResult(CallToolResult):
+    """The server's response to a get async tool result request."""
+
+    token: AsyncOperationToken
+    state: Literal["pending", "successful", "failed", "cancelled"]
+    error: ErrorData | None = None
+    model_config = ConfigDict(extra="allow")
+
+
 class ClientRequest(
     RootModel[
         PingRequest
@@ -1135,6 +1220,8 @@ class ClientRequest(
         | UnsubscribeRequest
         | CallToolRequest
         | ListToolsRequest
+        | GetAsyncToolResultRequest
+        | CancelAsyncToolCallRequest
     ]
 ):
     pass
@@ -1146,6 +1233,7 @@ class ClientNotification(
         | ProgressNotification
         | InitializedNotification
         | RootsListChangedNotification
+        | ResolveAsyncToolCallNotification
     ]
 ):
     pass
@@ -1155,7 +1243,14 @@ class ClientResult(RootModel[EmptyResult | CreateMessageResult | ListRootsResult
     pass
 
 
-class ServerRequest(RootModel[PingRequest | CreateMessageRequest | ListRootsRequest]):
+class ServerRequest(
+    RootModel[
+        PingRequest
+        | CreateMessageRequest
+        | ListRootsRequest
+        | GetAsyncToolResultRequest
+    ]
+):
     pass
 
 
@@ -1168,6 +1263,7 @@ class ServerNotification(
         | ResourceListChangedNotification
         | ToolListChangedNotification
         | PromptListChangedNotification
+        | ResolveAsyncToolCallNotification
     ]
 ):
     pass
@@ -1185,6 +1281,8 @@ class ServerResult(
         | ReadResourceResult
         | CallToolResult
         | ListToolsResult
+        | CancelAsyncToolCallResult
+        | GetAsyncToolResultResult
     ]
 ):
     pass

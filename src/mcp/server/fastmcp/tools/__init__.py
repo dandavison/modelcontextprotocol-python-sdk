@@ -1,4 +1,5 @@
+from .async_tool import AsyncTool
 from .base import Tool
 from .tool_manager import ToolManager
 
-__all__ = ["Tool", "ToolManager"]
+__all__ = ["Tool", "AsyncTool", "ToolManager"]

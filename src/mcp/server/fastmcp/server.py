@@ -38,6 +38,7 @@ from mcp.server.fastmcp.exceptions import ResourceError
 from mcp.server.fastmcp.prompts import Prompt, PromptManager
 from mcp.server.fastmcp.resources import FunctionResource, Resource, ResourceManager
 from mcp.server.fastmcp.tools import Tool, ToolManager
+from mcp.server.fastmcp.tools.async_tool import AsyncTool
 from mcp.server.fastmcp.utilities.logging import configure_logging, get_logger
 from mcp.server.fastmcp.utilities.types import Image
 from mcp.server.lowlevel.helper_types import ReadResourceContents
@@ -52,6 +53,8 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.context import LifespanContextT, RequestContext, RequestT
 from mcp.types import (
     AnyFunction,
+    AsyncOperationToken,
+    AsyncToolResponse,
     EmbeddedResource,
     GetPromptResult,
     ImageContent,
@@ -243,6 +246,8 @@ class FastMCP:
         """Set up core MCP protocol handlers."""
         self._mcp_server.list_tools()(self.list_tools)
         self._mcp_server.call_tool()(self.call_tool)
+        self._mcp_server.get_async_tool_result()(self.get_async_tool_result)
+        self._mcp_server.cancel_async_tool_call()(self.cancel_async_tool_call)
         self._mcp_server.list_resources()(self.list_resources)
         self._mcp_server.read_resource()(self.read_resource)
         self._mcp_server.list_prompts()(self.list_prompts)
@@ -275,12 +280,33 @@ class FastMCP:
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
-    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource | AsyncToolResponse]:
         """Call a tool by name with arguments."""
         context = self.get_context()
         result = await self._tool_manager.call_tool(name, arguments, context=context)
         converted_result = _convert_to_content(result)
         return converted_result
+
+    async def get_async_tool_result(
+        self,
+        name: str,
+        token: AsyncOperationToken,
+        wait: int | None,
+    ) -> Iterable[TextContent | ImageContent | EmbeddedResource | AsyncToolResponse]:
+        """Get the result of an asynchronous tool call."""
+        context = self.get_context()
+        result = await self._tool_manager.get_async_tool_result(
+            name, token, wait, context=context
+        )
+        converted_result = _convert_to_content(result)
+        return converted_result
+
+    async def cancel_async_tool_call(
+        self, name: str, token: AsyncOperationToken
+    ) -> None:
+        """Cancel an asynchronous tool call."""
+        context = self.get_context()
+        await self._tool_manager.cancel_async_tool_call(name, token, context=context)
 
     async def list_resources(self) -> list[MCPResource]:
         """List all available resources."""
@@ -389,6 +415,31 @@ class FastMCP:
             return fn
 
         return decorator
+
+    def add_async_tool(
+        self,
+        async_tool: AsyncTool,
+        name: str | None = None,
+        description: str | None = None,
+        annotations: ToolAnnotations | None = None,
+    ) -> None:
+        """Add an async tool to the server.
+
+        The tool function can optionally request a Context object by adding a parameter
+        with the Context type annotation. See the @tool decorator for examples.
+
+        async_tool must be an instance of a class with `start`, `get_result`, and `cancel`
+        methods, whose signatures conform to the AsyncTool protocol.
+
+        Args:
+            async_tool: The class instance to register as an async tool
+            name: Optional name for the tool (defaults to function name)
+            description: Optional description of what the tool does
+            annotations: Optional ToolAnnotations providing additional tool information
+        """
+        self._tool_manager.add_async_tool(
+            async_tool, name=name, description=description, annotations=annotations
+        )
 
     def add_resource(self, resource: Resource) -> None:
         """Add a resource to the server.
@@ -875,12 +926,14 @@ class FastMCP:
 
 def _convert_to_content(
     result: Any,
-) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+) -> Sequence[TextContent | ImageContent | EmbeddedResource | AsyncToolResponse]:
     """Convert a result to a sequence of content objects."""
     if result is None:
         return []
 
-    if isinstance(result, TextContent | ImageContent | EmbeddedResource):
+    if isinstance(
+        result, TextContent | ImageContent | EmbeddedResource | AsyncToolResponse
+    ):
         return [result]
 
     if isinstance(result, Image):

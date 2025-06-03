@@ -4,10 +4,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.fastmcp.tools.async_tool import AsyncTool, AsyncToolModel
 from mcp.server.fastmcp.tools.base import Tool
 from mcp.server.fastmcp.utilities.logging import get_logger
 from mcp.shared.context import LifespanContextT, RequestT
-from mcp.types import ToolAnnotations
+from mcp.types import AsyncOperationToken, ToolAnnotations
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp.server import Context
@@ -24,6 +25,7 @@ class ToolManager:
         warn_on_duplicate_tools: bool = True,
         *,
         tools: list[Tool] | None = None,
+        # TODO: support populating async_tools via constructor?
     ):
         self._tools: dict[str, Tool] = {}
         if tools is not None:
@@ -61,6 +63,28 @@ class ToolManager:
         self._tools[tool.name] = tool
         return tool
 
+    def add_async_tool(
+        self,
+        async_tool: AsyncTool,
+        name: str | None = None,
+        description: str | None = None,
+        annotations: ToolAnnotations | None = None,
+    ) -> Tool:
+        """Add an async tool to the server."""
+        tool = AsyncToolModel.from_instance(
+            async_tool,
+            name=name or async_tool.__class__.__name__,
+            description=description,
+            annotations=annotations,
+        )
+        existing = self._tools.get(tool.name)
+        if existing:
+            if self.warn_on_duplicate_tools:
+                logger.warning(f"Tool already exists: {tool.name}")
+            return existing
+        self._tools[tool.name] = tool
+        return tool
+
     async def call_tool(
         self,
         name: str,
@@ -73,3 +97,38 @@ class ToolManager:
             raise ToolError(f"Unknown tool: {name}")
 
         return await tool.run(arguments, context=context)
+
+    async def get_async_tool_result(
+        self,
+        name: str,
+        token: AsyncOperationToken,
+        wait: int | None,
+        context: Context[ServerSessionT, LifespanContextT, RequestT] | None = None,
+    ) -> Any:
+        """Get the result of an asynchronous tool operation."""
+        tool = self.get_tool(name)
+        if not tool:
+            raise ToolError(f"Unknown tool: {name}")
+        if not isinstance(tool, AsyncToolModel):
+            raise ToolError(f"Tool is not an async tool: {name}")
+        if not tool.get_result:
+            raise ToolError(f"Async tool has no get_result method: {name}")
+        return await tool.get_result.run(
+            {"token": token, "wait": wait}, context=context
+        )
+
+    async def cancel_async_tool_call(
+        self,
+        name: str,
+        token: AsyncOperationToken,
+        context: Context[ServerSessionT, LifespanContextT, RequestT] | None = None,
+    ) -> None:
+        """Cancel an asynchronous tool call."""
+        tool = self.get_tool(name)
+        if not tool:
+            raise ToolError(f"Unknown tool: {name}")
+        if not isinstance(tool, AsyncToolModel):
+            raise ToolError(f"Tool is not an async tool: {name}")
+        if not tool.cancel:
+            raise ToolError(f"Async tool has no cancel method: {name}")
+        return await tool.cancel.run({"token": token}, context=context)

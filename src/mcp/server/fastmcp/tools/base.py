@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import functools
 import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, get_origin
+from typing import TYPE_CHECKING, Any, Self, get_origin
 
 from pydantic import BaseModel, Field
 
@@ -44,7 +44,7 @@ class Tool(BaseModel):
         description: str | None = None,
         context_kwarg: str | None = None,
         annotations: ToolAnnotations | None = None,
-    ) -> Tool:
+    ) -> Self:
         """Create a Tool from a function."""
         from mcp.server.fastmcp.server import Context
 

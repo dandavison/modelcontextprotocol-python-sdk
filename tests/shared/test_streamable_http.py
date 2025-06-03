@@ -43,6 +43,7 @@ from mcp.shared.message import (
 )
 from mcp.shared.session import RequestResponder
 from mcp.types import (
+    AsyncToolResponse,
     InitializeResult,
     TextContent,
     TextResourceContents,
@@ -868,8 +869,10 @@ async def test_streamablehttp_client_json_response(
             # Call a tool and verify JSON response handling
             result = await session.call_tool("test_tool", {})
             assert len(result.content) == 1
-            assert result.content[0].type == "text"
-            assert result.content[0].text == "Called test_tool"
+            [content] = result.content
+            assert not isinstance(content, AsyncToolResponse)
+            assert content.type == "text"
+            assert content.text == "Called test_tool"
 
 
 @pytest.mark.anyio
@@ -1140,8 +1143,10 @@ async def test_streamablehttp_client_resumption(event_server):
 
             # We should get a complete result
             assert len(result.content) == 1
-            assert result.content[0].type == "text"
-            assert "Completed" in result.content[0].text
+            [content] = result.content
+            assert not isinstance(content, AsyncToolResponse)
+            assert content.type == "text"
+            assert "Completed" in content.text
 
             # We should have received the remaining notifications
             assert len(captured_notifications) > 0
@@ -1211,10 +1216,11 @@ async def test_streamablehttp_server_sampling(basic_server, basic_server_url):
 
             # Verify the tool result contains the expected content
             assert len(tool_result.content) == 1
-            assert tool_result.content[0].type == "text"
+            [content] = tool_result.content
+            assert not isinstance(content, AsyncToolResponse)
+            assert content.type == "text"
             assert (
-                "Response from sampling: Received message from server"
-                in tool_result.content[0].text
+                "Response from sampling: Received message from server" in content.text
             )
 
             # Verify sampling callback was invoked

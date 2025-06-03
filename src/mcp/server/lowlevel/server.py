@@ -405,7 +405,10 @@ class Server(Generic[LifespanResultT, RequestT]):
                 ...,
                 Awaitable[
                     Iterable[
-                        types.TextContent | types.ImageContent | types.EmbeddedResource
+                        types.TextContent
+                        | types.ImageContent
+                        | types.EmbeddedResource
+                        | types.AsyncToolResponse
                     ]
                 ],
             ],
@@ -413,12 +416,13 @@ class Server(Generic[LifespanResultT, RequestT]):
             logger.debug("Registering handler for CallToolRequest")
 
             async def handler(req: types.CallToolRequest):
+                cancelled_exc_class = anyio.get_cancelled_exc_class()
                 try:
                     results = await func(req.params.name, (req.params.arguments or {}))
                     return types.ServerResult(
                         types.CallToolResult(content=list(results), isError=False)
                     )
-                except Exception as e:
+                except (Exception, cancelled_exc_class) as e:
                     return types.ServerResult(
                         types.CallToolResult(
                             content=[types.TextContent(type="text", text=str(e))],
@@ -427,6 +431,88 @@ class Server(Generic[LifespanResultT, RequestT]):
                     )
 
             self.request_handlers[types.CallToolRequest] = handler
+            return func
+
+        return decorator
+
+    def get_async_tool_result(self):
+        def decorator(
+            func: Callable[
+                ...,
+                Awaitable[
+                    Iterable[
+                        types.TextContent
+                        | types.ImageContent
+                        | types.EmbeddedResource
+                        | types.AsyncToolResponse
+                    ]
+                ],
+            ],
+        ):
+            logger.debug("Registering handler for GetAsyncToolResultRequest")
+
+            async def handler(req: types.GetAsyncToolResultRequest):
+                cancelled_exc_class = anyio.get_cancelled_exc_class()
+                try:
+                    results = await func(
+                        req.params.name, req.params.token, req.params.wait
+                    )
+                    return types.ServerResult(
+                        types.GetAsyncToolResultResult(
+                            content=list(results),
+                            isError=False,
+                            token=req.params.token,
+                            state="successful",
+                        )
+                    )
+                except (Exception, cancelled_exc_class) as e:
+                    state = (
+                        "cancelled" if isinstance(e, cancelled_exc_class) else "failed"
+                    )
+                    return types.ServerResult(
+                        types.GetAsyncToolResultResult(
+                            content=[types.TextContent(type="text", text=str(e))],
+                            isError=True,
+                            token=req.params.token,
+                            state=state,
+                            error=types.ErrorData(
+                                code=types.INTERNAL_ERROR,
+                                message=(
+                                    f"Error processing GetAsyncToolResultRequest: {e}"
+                                ),
+                            ),
+                        )
+                    )
+
+            self.request_handlers[types.GetAsyncToolResultRequest] = handler
+            return func
+
+        return decorator
+
+    def cancel_async_tool_call(self):
+        def decorator(
+            func: Callable[..., Awaitable[None]],
+        ):
+            logger.debug("Registering handler for CancelAsyncToolCallRequest")
+
+            async def handler(req: types.CancelAsyncToolCallRequest):
+                cancelled_exc_class = anyio.get_cancelled_exc_class()
+                try:
+                    await func(req.params.name, req.params.token)
+                    return types.ServerResult(types.CancelAsyncToolCallResult())
+                except (Exception, cancelled_exc_class) as e:
+                    return types.ServerResult(
+                        types.CancelAsyncToolCallResult(
+                            error=types.ErrorData(
+                                code=types.INTERNAL_ERROR,
+                                message=(
+                                    f"Error processing CancelAsyncToolCallRequest: {e}"
+                                ),
+                            )
+                        )
+                    )
+
+            self.request_handlers[types.CancelAsyncToolCallRequest] = handler
             return func
 
         return decorator

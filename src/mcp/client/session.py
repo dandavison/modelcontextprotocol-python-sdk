@@ -299,6 +299,41 @@ class ClientSession(
             progress_callback=progress_callback,
         )
 
+    async def get_async_tool_result(
+        self,
+        name: str,
+        token: types.AsyncOperationToken,
+        wait: int | None = None,
+    ) -> types.GetAsyncToolResultResult:
+        """Send a tools/async/get-result request."""
+        return await self.send_request(
+            types.ClientRequest(
+                types.GetAsyncToolResultRequest(
+                    method="tools/async/get-result",
+                    params=types.GetAsyncToolResultRequestParams(
+                        name=name, token=token, wait=wait
+                    ),
+                )
+            ),
+            types.GetAsyncToolResultResult,
+        )
+
+    async def cancel_async_tool_call(
+        self, name: str, token: types.AsyncOperationToken
+    ) -> types.CancelAsyncToolCallResult:
+        """Send a tools/async/cancel request."""
+        return await self.send_request(
+            types.ClientRequest(
+                types.CancelAsyncToolCallRequest(
+                    method="tools/async/cancel",
+                    params=types.CancelAsyncToolCallRequestParams(
+                        name=name, token=token
+                    ),
+                ),
+            ),
+            types.CancelAsyncToolCallResult,
+        )
+
     async def list_prompts(self, cursor: str | None = None) -> types.ListPromptsResult:
         """Send a prompts/list request."""
         return await self.send_request(
